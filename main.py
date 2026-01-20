@@ -1,5 +1,7 @@
 import os, django
 
+import email_logic
+
 # Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pysite.settings')
 django.setup()
@@ -455,18 +457,16 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
 
     if 'contexts' not in kwargs:
         kwargs['contexts'] = {}
-    kwargs['contexts']['STRUCTURE'] = """
-{
-    "name": "Full Name",
-    "email": "Email Address",
-    "phone": "Phone Number",
-    "description": "Description of the job or needs. Its okay to add more details here as they are provided.",
-    "preferred_contact_method": "Preferred Contact Method (email, phone, etc.)",
-    "budget": "Estimated Budget (if known)",
-    "timeline": "Preferred Timeline for starting the project",
-    "date_time": "Preferred **Date and Time** for the consultation",
-}
-    """
+    structure = {
+        "name": "Full Name",
+        "email": "Email Address",
+        "phone": "Phone Number",
+        "description": "Description of the job or needs. Its okay to add more details here as they are provided.",
+        "budget": "Estimated Budget (if known)",
+        "timeline": "Preferred Timeline for starting the project",
+        "date_time": "Preferred **Date and Time** for the consultation",
+    }
+    kwargs['contexts']['STRUCTURE'] = json.dumps(structure, indent=4)
 
     # Store the model if its changed
     if model is not None and model != "":
@@ -496,13 +496,26 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
 
         async for chunk in data_only.ok_value:
             if chunk.type == 'full_content':
-                profiles = extract_dicts_from_text(chunk.text)
-                if len(profiles) > 0:
-                    js = {"type": "profile", "profile": profiles[0]}
-                    yield f"data: {json.dumps(js)}\n\n"
+                target = kwargs['contexts']['PROFILE']
+                try:
+                    target = json5.loads(target)
+                except:
+                    target = {}
+                if target is None or target == '' or not isinstance(target, dict):
+                    target = {}
 
-                    # Store the updated profile!
-                    kwargs['contexts']['PROFILE'] = json5.dumps(profiles[0])
+                # Extract profiles from the text
+                profiles = extract_dicts_from_text(chunk.text)
+                for profile in profiles:
+                    for key in structure.keys():
+                        if isinstance(profile[key], str) and profile[key]:
+                            target[key] = profile[key].strip()
+
+                js = {"type": "profile", "profile": target}
+                yield f"data: {json.dumps(js)}\n\n"
+
+                # Store the updated profile!
+                kwargs['contexts']['PROFILE'] = json5.dumps(target)
 
 
         # Human response
@@ -538,6 +551,11 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
             elif chunk.type == 'conversation':
                 conversation.append(chunk.metadata)
                 continue
+
+            elif chunk.type == 'full_content':
+                if re.search(r'your meeting has been scheduled', chunk.text, re.IGNORECASE):
+                    info = kwargs['contexts']['PROFILE']
+                    email_logic.raw_email('lukedupin@gmail.com', 'New Consultation Scheduled', f'A new consultation has been scheduled with the following details:\n\n{info}')
 
             else:
                 continue
