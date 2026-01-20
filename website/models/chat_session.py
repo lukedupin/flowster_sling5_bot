@@ -34,10 +34,18 @@ class ChatSession(models.Model):
         return chat_session
 
     @staticmethod
-    def customAdmin():
+    def customAdmin ():
+        from website.models.prompt import Prompt
+
+        class PromptInline(admin.TabularInline):
+            model = Prompt
+            fields = ('type', 'content', 'extra')
+
+
         class Admin(admin.ModelAdmin):
             list_display = ('name', 'suggested_consultation', 'timestamp_on')
             fields = ('uid', 'name', 'suggested_consultation', 'timestamp_on')
             readonly_fields = ('timestamp_on', 'uid')
+            inlines = [PromptInline]
 
         return Admin
