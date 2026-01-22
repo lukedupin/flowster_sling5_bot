@@ -460,8 +460,12 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
                         if isinstance(profile[key], str) and profile[key]:
                             target[key] = profile[key].strip()
 
+                # Save the table info
                 assistant.extra['after'] = target
                 await sync_to_async(assistant.save)()
+
+                chat_sess.profile = target
+                await sync_to_async(chat_sess.save)()
 
                 js = {"type": "profile", "profile": target}
                 yield f"data: {json.dumps(js)}\n\n"
@@ -562,6 +566,26 @@ async def _model(request:Request):
             return {"successful": False, "reason": ret.err_value}
 
     return {"successful": True, "model": model}
+
+
+@app.get("/api/list_conversations")
+async def list_conversations(request:Request):
+    conversations = await sync_to_async( list )( ChatSession.objects.all().order_by('-timestamp_on'))
+    return {"successful": True, "conversations": [x.toJson() for x in conversations]}
+
+
+@app.post("/api/conversation")
+async def list_conversations(request:Request):
+    body = await request.json()
+    conversation_uid = body.get('conversation_uid', None)
+
+    conversation = await ChatSession.getByUid(conversation_uid)
+    if conversation is None:
+        return {"successful": False, "reason": "Conversation not found."}
+
+    _prompts = Prompt.objects.filter(chat_session=conversation).order_by('id')
+    prompts = [x.toJson() for x in await sync_to_async( list )( _prompts )]
+    return {"successful": True, "conversation": conversation.toJson(), "prompts": prompts }
 
 
 @app.websocket("/ws/speech_to_text")
