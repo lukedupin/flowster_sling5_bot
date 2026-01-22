@@ -279,81 +279,13 @@ async def knowledge_chat(request:Request):#question: str=Body(...), conversation
     """
 
     # Suggest scheduling a consultation?
-    if len(conversation) > 4:
+    if len(conversation) > 2:
         kwargs['system'] += "\nAfter answering the user's question, suggest scheduling a free consultation by saying."
 
     if 'contexts' not in kwargs:
         kwargs['contexts'] = {}
-    kwargs['contexts']['KNOWLEDGE_BASE'] = """
-Mountain America Homes – Knowledge Center
-A premier custom‑home builder in the CDA area, owned by Aaron Noffke.
-
-“Built with love, built for life.” – Aaron Noffke
-
-1. About Us
-Item	Details
-Founder	Aaron Noffke – Born & raised in Quartling, Idaho.
-Location	Mountain America Homes – CDA area (exact address available upon request).
-Office Hours	Mon‑Fri: 8AM – 5PM
-Phone	208‑555‑111
-Email	aaron.noffke@mountainamericahomes.com
-Address     1234 Mountain View Rd, CDA, ID 83815
-Website	(Coming soon!)
-Specialties	• Custom rancher homes
-• Multi‑story builds
-• Architectural design & planning
-• Premium materials & craftsmanship
-Why Choose Mountain America Homes?
-Local Expertise – Aaron’s deep roots in Quartling give him intimate knowledge of the region’s climate, regulations, and aesthetics.
-Expert Team – A hand‑picked crew of architects, designers, and builders committed to quality and innovation.
-Luxury & Value – Homes ranging from $600k to $3Million, with a typical price of $300–$450 per square foot.
-2. Our Services
-Service	What We Offer	Who It’s For
-Consultation & Planning	Free initial meeting to understand your vision, budget, and site.	Anyone starting a home‑building journey.
-Architectural Design	3‑D models, floor plans, material selections, and energy‑efficiency analysis.	Clients wanting a fully customized design.
-Rancher Homes	Classic ranch‑style homes with modern upgrades, wide open spaces, and efficient layouts.	Buyers looking for that traditional feel.
-Multi‑Story Builds	Two‑to‑four‑story homes, with smart space utilization, luxury amenities, and privacy.	Those needing extra rooms or a bigger footprint.
-Construction Management	Full project oversight—permits, inspections, scheduling, and budget control.	Clients who want a seamless building experience.
-Renovations & Add‑Ons	Extensions, remodels, or specialty additions for existing homes.	Homeowners wanting to upgrade.
-Note: All our services are delivered under the same high‑quality standards that define Mountain America Homes.
-
-3. Pricing
-Item	Cost
-Initial Consultation	Free
-Hourly Consulting	$300/hr (after the free consultation)
-Average Cost per Square Foot	$300 – $450
-Typical Project Cost	$600k – $3Million (depending on size, features, and location)
-Tip: We provide a detailed cost breakdown during the first meeting so you can see exactly what you’re paying for—no hidden fees.
-
-4. Frequently Asked Questions
-Question	Answer
-How long does it take to build a home?	A standard 6month to 1year timeline from design to completion, depending on size and complexity.
-Do you handle permits?	Yes. Our project managers secure all necessary permits and coordinate inspections.
-Can I customize the design?	Absolutely. We collaborate closely with you to incorporate your ideas.
-What financing options are available?	We work with several lenders and can help you navigate mortgage options.
-Is there a warranty on your work?	All new homes come with a 1‑year workmanship warranty and a 10‑year structural warranty.
-5. Get Started
-Step	What to Do
-1. Contact Us	Phone: 208‑555‑111
-Email: aaron.noffke@mountainamericahomes.com
-2. Schedule Your Free Consultation	Bring your vision, sketches, or just a coffee!
-3. Discuss Your Project	We'll review your goals, site, and budget.
-4. Move Forward	Sign the agreement, start design, and we’ll take it from there.
-Dream big, build smart, live beautifully.
-
-6. Testimonials
-“Aaron’s passion for Idaho shines through every detail of our rancher home. The team was responsive, transparent, and delivered beyond our expectations.” – Sarah & Tom L.
-
-“We were blown away by the craftsmanship and the way Mountain America Homes turned our vision into a reality. Highly recommended.” – J. Martinez
-
-Stay Connected
-Facebook – (link)
-Instagram – (link)
-LinkedIn – (link)
-Mountain America Homes – Where your dream home takes shape.
-
-(Prepared for the knowledge center – use as reference, FAQ, or marketing material.)
-    """
+    with open("knowledge_base.md", "r") as f:
+        kwargs['contexts']['KNOWLEDGE_BASE'] = f.read()
 
     # Store the model if its changed
     if model is not None and model != "":
@@ -382,12 +314,6 @@ Mountain America Homes – Where your dream home takes shape.
     if (ret := await chat_result( FLOW_SHEET, stream )).is_err():
         return {"error": ret.err_value}
 
-    await sync_to_async( Prompt.objects.create )(
-        chat_session=chat_sess,
-        type=Prompt.TYPE_USER,
-        content=question,
-    )
-
     # Create my system prompt
     assistant = Prompt(chat_session=chat_sess, type=Prompt.TYPE_ASSISTANT)
 
@@ -404,7 +330,7 @@ Mountain America Homes – Where your dream home takes shape.
                 await sync_to_async(chat_sess.save)()
 
         elif chunk.type == 'full_thinking':
-            assistant.extra['thinking'] = chunk.text
+            assistant.thinking = chunk.text
 
 
     """Endpoint that streams events using SSE"""
@@ -425,6 +351,10 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
     conversation: list[dict] = body.get('conversation', [])
     contexts: list[dict] = body.get('contexts', [])
     model: str = body.get('model', None)
+    chat_session_uid: str = body.get('chat_session_uid', None)
+
+    # Get or create the chat session
+    chat_sess = await ChatSession.getOrCreateByUid(chat_session_uid, question[:64] )
 
     if len([x for x in contexts if x.get('name') == 'system']) <= 0:
         contexts.append({
@@ -475,11 +405,14 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
     async def _sse_stream():
         # Data only
 
+        # Add the user's question
+        await Prompt.create(type=Prompt.TYPE_USER, chat_session=chat_sess, content=question)
+
         # Endpoint that returns a single response
         if (_stream := await chat_stream(
             FLOW_SHEET,
             question,
-            conversation=conversation,
+            conversation=[],
             tools=[],
             images=images,
             model=model,
@@ -494,9 +427,25 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
             yield f'error: {data_only.err_value}\n\n'
             return
 
+        # Create my system prompt
+        assistant = Prompt(chat_session=chat_sess, type=Prompt.TYPE_ASSISTANT)
+        assistant.extra = {
+            'raw': None,
+            'before': None,
+            'after': None,
+            'thinking': None,
+        }
+
         async for chunk in data_only.ok_value:
-            if chunk.type == 'full_content':
+            if chunk.type == 'full_thinking':
+                assistant.extra['thinking'] = chunk.text
+
+            elif chunk.type == 'full_content':
                 target = kwargs['contexts']['PROFILE']
+                assistant.extra['raw'] = chunk.text
+                assistant.extra['before'] = target
+
+                # Conver to dict
                 try:
                     target = json5.loads(target)
                 except:
@@ -511,12 +460,14 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
                         if isinstance(profile[key], str) and profile[key]:
                             target[key] = profile[key].strip()
 
+                assistant.extra['after'] = target
+                await sync_to_async(assistant.save)()
+
                 js = {"type": "profile", "profile": target}
                 yield f"data: {json.dumps(js)}\n\n"
 
                 # Store the updated profile!
                 kwargs['contexts']['PROFILE'] = json5.dumps(target)
-
 
         # Human response
         kwargs['system'] = system_text['content']
@@ -552,10 +503,16 @@ async def profile_chat(request:Request):#question: str=Body(...), conversation: 
                 conversation.append(chunk.metadata)
                 continue
 
+            elif chunk.type == 'full_thinking':
+                assistant.thinking = chunk.text
+
             elif chunk.type == 'full_content':
+                assistant.content = chunk.text
+                await sync_to_async(assistant.save)()
+
                 if re.search(r'your meeting has been scheduled', chunk.text, re.IGNORECASE):
-                    info = kwargs['contexts']['PROFILE']
-                    email_logic.raw_email('lukedupin@gmail.com', 'New Consultation Scheduled', f'A new consultation has been scheduled with the following details:\n\n{info}')
+                    info = json5.loads(kwargs['contexts']['PROFILE'])
+                    email_logic.raw_email(info['email'], 'Mountain America Homes Consultation', f'A new consultation has been scheduled with the following details:\n\n{chunk.text}')
 
             else:
                 continue

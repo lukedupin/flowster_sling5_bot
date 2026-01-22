@@ -10,12 +10,14 @@ class Prompt(models.Model):
     TYPE_USER = 1
     TYPE_ASSISTANT = 2
     TYPE_TOOL = 3
+    TYPE_NONE = 4
     TYPE_CHOICES = [
         (TYPE_USER, 'User'),
         (TYPE_ASSISTANT, 'Assistant'),
         (TYPE_TOOL, 'Tool'),
+        (TYPE_NONE, 'None'),
     ]
-    DEFAULT_TYPE = TYPE_USER
+    DEFAULT_TYPE = TYPE_NONE
 
     id = models.AutoField(primary_key=True)
     chat_session = models.ForeignKey(ChatSession, on_delete=models.CASCADE)
@@ -24,6 +26,7 @@ class Prompt(models.Model):
     uid = models.UUIDField(default=uuid.uuid4, editable=False)
     type = models.IntegerField(choices=TYPE_CHOICES, default=DEFAULT_TYPE)
     content = models.TextField()
+    thinking = models.TextField(blank=True, default='', help_text='Holds the LLM thinking process if any')
 
     extra = models.JSONField(blank=True, default=dict, help_text='Holds things like thinking or tool info')
 
@@ -44,6 +47,7 @@ class Prompt(models.Model):
             'uid': str(self.uid),
             'type': self.get_type_display(),
             'content': util.xstr(self.content),
+            'thinking': util.xstr(self.thinking),
             'extra': self.extra,
             'timestamp_on': self.timestamp_on.isoformat(),
         }
@@ -55,6 +59,6 @@ class Prompt(models.Model):
             list_filter = ('type',)
             search_fields = ('content',)
             readonly_fields = ('uid', 'timestamp_on')
-            fields = ('type', 'content', 'extra', 'timestamp_on')
+            fields = ('type', 'content', 'thinking', 'extra', 'timestamp_on')
 
         return Admin

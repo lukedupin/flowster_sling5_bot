@@ -10,6 +10,7 @@ class ChatSession(models.Model):
     uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255, blank=True, null=True)
     suggested_consultation = models.BooleanField(default=False)
+    profile = models.JSONField(blank=True, null=True)
 
     timestamp_on = models.DateTimeField(auto_now_add=True)
 
@@ -33,18 +34,28 @@ class ChatSession(models.Model):
 
         return chat_session
 
+    def toJson(self):
+        return {
+            'uid': str(self.uid),
+            'name': str(self.name),
+            'suggested_consultation': self.suggested_consultation,
+            'profile': self.profile,
+            'timestamp_on': self.timestamp_on.isoformat(),
+        }
+
     @staticmethod
     def customAdmin ():
         from website.models.prompt import Prompt
 
         class PromptInline(admin.TabularInline):
             model = Prompt
-            fields = ('type', 'content', 'extra')
+            fields = ('type', 'content', 'thinking', 'extra')
+            extra = 0
 
 
         class Admin(admin.ModelAdmin):
             list_display = ('name', 'suggested_consultation', 'timestamp_on')
-            fields = ('uid', 'name', 'suggested_consultation', 'timestamp_on')
+            fields = ('uid', 'name', 'suggested_consultation', 'profile', 'timestamp_on')
             readonly_fields = ('timestamp_on', 'uid')
             inlines = [PromptInline]
 
